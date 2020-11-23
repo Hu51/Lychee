@@ -5,22 +5,89 @@
 
 trigger:
 - master
+- releases/*
+- azure
 
 pool:
   vmImage: 'ubuntu-20.04'
 
-variables:
-  phpVersion: 7.4
+# variables:
+#   phpVersion: 7.4
 
-steps:
-- script: |
-    sudo update-alternatives --set php /usr/bin/php$(phpVersion)
-    sudo update-alternatives --set phar /usr/bin/phar$(phpVersion)
-    sudo update-alternatives --set phpdbg /usr/bin/phpdbg$(phpVersion)
-    sudo update-alternatives --set php-cgi /usr/bin/php-cgi$(phpVersion)
-    sudo update-alternatives --set phar.phar /usr/bin/phar.phar$(phpVersion)
-    php -version
-  displayName: 'Use PHP version $(phpVersion)'
+# steps:
+# - script: |
+#     sudo update-alternatives --set php /usr/bin/php$(phpVersion)
+#     sudo update-alternatives --set phar /usr/bin/phar$(phpVersion)
+#     sudo update-alternatives --set phpdbg /usr/bin/phpdbg$(phpVersion)
+#     sudo update-alternatives --set php-cgi /usr/bin/php-cgi$(phpVersion)
+#     sudo update-alternatives --set phar.phar /usr/bin/phar.phar$(phpVersion)
+#     php -version
+#   displayName: 'Use PHP version $(phpVersion)'
 
-- script: composer install --no-interaction --prefer-dist
-  displayName: 'composer install'
+# - script: composer install --no-interaction --prefer-dist
+#   displayName: 'composer install'
+
+
+parameters:
+- name: phpVersions
+  type: string
+  default: '7.4'
+  values:
+  - '7.4'
+- name: sqls
+  type: string
+  default: 'mariadb'
+  values:
+  - 'mariadb'
+  - 'postgresql'
+  - 'sqlite'
+- name: exiftools
+  type: string
+  default: 'yes'
+  values:
+  - 'yes'
+  - 'no'
+- name: composer_devs
+  type: string
+  default: 'yes'
+  values:
+  - 'yes'
+  - 'no'
+
+jobs:
+  - ${{ each phpVersion in parameters.phpVersions }}:
+    - ${{ each sql in parameters.sqls }}:
+      - ${{ each exiftool in parameters.exiftools }}:
+        - ${{ each composer_dev in parameters.composer_devs }}:
+          - job:
+            displayName: ${{ format('PHP:{0} SQL:{1} exiftool:{2} composer_dev:{3}', phpVersion, sql, exiftool, composer_dev) }}
+            steps:
+            - script: |
+                sudo update-alternatives --set php /usr/bin/php$(phpVersion)
+                sudo update-alternatives --set phar /usr/bin/phar$(phpVersion)
+                sudo update-alternatives --set phpdbg /usr/bin/phpdbg$(phpVersion)
+                sudo update-alternatives --set php-cgi /usr/bin/php-cgi$(phpVersion)
+                sudo update-alternatives --set phar.phar /usr/bin/phar.phar$(phpVersion)
+                php -version
+              displayName: 'Use PHP version $(phpVersion)'
+            - script: apt install php-pecl-http php-imagick php-mbstring php-json php-gd mariadb-server sqlite3 postgresql
+              displayName: 'Install apt packages'
+            - script: printf "\n" | pecl install imagick
+              displayName: 'Install php-imagick from pecl'
+            - script: if [ '$EXIFTOOL' = 'yes' ] ; then bash setup_exiftool.sh ; fi
+              displayName: ${{ format('Install exiftool? {0}', exiftool) }}
+            - script: if [ '$SQL' = 'mariadb' ] ; then mysql -e 'create database homestead_test;' ; fi
+              displayName: Create mariadb database (if required)
+            - script: if [ '$SQL' = 'postgresql' ] ; then psql -c 'create database homestead_test;' -U postgres ; fi"
+              displayName: Create postgres database (if required)
+            - script: if [ '$SQL' = 'sqlite' ] ; then touch database/database.sqlite ; fi
+              displayName: Create sqlite database (if required)
+            - script: composer self-update
+              displayName: Update composer
+
+            - script: if [ '$COMPOSER_DEV' = 'yes' ] ; then bash test_dev.sh ; fi
+              displayName: 'composer dev tests'
+            - script: if [ '$COMPOSER_DEV' = 'no' ] ; then bash test_dist.sh ; fi
+              displayName: 'composer dist tests'
+            - bash: ./codecov.sh
+              displayName: 'codecov'
